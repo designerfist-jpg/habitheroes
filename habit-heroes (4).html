@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+<title>Habit Heroes</title>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0}
+  html,body{height:100%}
+  body{font-family:Nunito,sans-serif;background:radial-gradient(120% 80% at 0% 0%,#fff6e6,#fbf3e3 40%,#f5ecd8);background-attachment:fixed}
+  button:active{transform:scale(.97)}
+  input{font-family:Nunito}
+  ::-webkit-scrollbar{width:8px}
+  ::-webkit-scrollbar-thumb{background:#e0d9c8;border-radius:8px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useMemo,useRef,useCallback}=React;
+const SK="kids-quest-v2";
+
+/* ── constants ── */
+const CATS={
+  salah:   {label:"Salah",   emoji:"🕌",color:"#1f9d63",soft:"#e2f3ea"},
+  learning:{label:"Learning",emoji:"📚",color:"#3b7bd6",soft:"#e4eefb"},
+  health:  {label:"Health",  emoji:"🍎",color:"#2faa6b",soft:"#e0f5ea"},
+  chores:  {label:"Chores",  emoji:"🧹",color:"#e8821e",soft:"#fdeedb"},
+  mind:    {label:"Mindful", emoji:"🧘",color:"#8b5cf6",soft:"#efe9fd"},
+  fun:     {label:"Goals",   emoji:"⭐",color:"#e0457b",soft:"#fde3ee"},
+};
+const PRAYERS=["Fajr","Dhuhr","Asr","Maghrib","Isha"];
+const AVATARS=["🦊","🐼","🦁","🐸","🦄","🐯","🐶","🐱","🐰","🐵","🦖","🐧","🐢","🦋"];
+const COLORS=["#3b7bd6","#2faa6b","#e8821e","#8b5cf6","#e0457b","#0ea5b7","#d9a400","#e3503e"];
+const STARTER=[
+  {title:"Fajr",   category:"salah",requiresApproval:true},
+  {title:"Dhuhr",  category:"salah",requiresApproval:true},
+  {title:"Asr",    category:"salah",requiresApproval:true},
+  {title:"Maghrib",category:"salah",requiresApproval:true},
+  {title:"Isha",   category:"salah",requiresApproval:true},
+  {title:"Read for 20 minutes",       category:"learning",requiresApproval:false},
+  {title:"Practice maths",            category:"learning",requiresApproval:false},
+  {title:"Make my bed",               category:"chores",  requiresApproval:false},
+  {title:"Tidy my room",              category:"chores",  requiresApproval:false},
+  {title:"Eat fruit or veg",          category:"health",  requiresApproval:false},
+  {title:"Play or exercise outside",  category:"health",  requiresApproval:false},
+  {title:"Help someone in the family",category:"mind",    requiresApproval:false},
+];
+const DEF_PT={Fajr:{s:"05:00",e:"07:00"},Dhuhr:{s:"12:30",e:"14:30"},Asr:{s:"15:30",e:"17:00"},Maghrib:{s:"18:00",e:"19:30"},Isha:{s:"20:00",e:"23:00"}};
+const DEF_SETTINGS={currency:"Rs ",weeklyBudget:1000,pin:null,pt:{...DEF_PT}};
+const GROUPS={
+  sawab:    {label:"Sawab",     emoji:"🕌",color:"#34d399",glow:"rgba(52,211,153,.7)", cats:["salah"],               unit:"prayers"},
+  family:   {label:"Family Joy",emoji:"❤️",color:"#fb7185",glow:"rgba(251,113,133,.7)",cats:["chores","mind","health"],unit:"deeds"},
+  knowledge:{label:"Knowledge", emoji:"📚",color:"#60a5fa",glow:"rgba(96,165,250,.7)", cats:["learning","fun"],        unit:"tasks"},
+};
+
+/* ── utils ── */
+const uid=()=>Math.random().toString(36).slice(2,10);
+const dk=d=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");return `${y}-${m}-${day}`;};
+const add=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
+const tod=()=>{const d=new Date();d.setHours(0,0,0,0);return d;};
+const wkSat=d=>{const x=new Date(d);x.setHours(0,0,0,0);return add(x,-((x.getDay()+1)%7));};
+const shade=h=>{const n=parseInt(h.slice(1),16);return `rgb(${Math.max(0,(n>>16)-40)},${Math.max(0,((n>>8)&255)-40)},${Math.max(0,(n&255)-40)})`;};
+const fmt=d=>d.toLocaleDateString(undefined,{day:"numeric",month:"short"});
+const clamp=v=>Math.max(0,Math.min(100,v));
+const polar=(cx,cy,r,p)=>{const a=Math.PI*(1-clamp(p)/100);return[cx+r*Math.cos(a),cy-r*Math.sin(a)];};
+const nowMins=()=>{const n=new Date();return n.getHours()*60+n.getMinutes();};
+const toMins=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+const load=()=>{try{const v=localStorage.getItem(SK);return v?JSON.parse(v):null;}catch{return null;}};
+const persist=d=>{try{localStorage.setItem(SK,JSON.stringify(d));}catch{}};
+
+/* ── icons ── */
+const I={
+  check:(s=18,c="#fff")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
+  plus: (s=18,c="#fff")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="3" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  X:    (s=20,c="#8c8576")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  trash:(s=16,c="#d9534f")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+  left: (s=18,c="#7d7666")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>,
+  right:(s=18,c="#7d7666")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>,
+  gear: (s=16,c="#7d7666")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+  lock: (s=14,c="#b45309")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
+  clock:(s=14,c="#b09a63")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  shield:(s=14,c="#8b5cf6")=><svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+};
+
+/* ── Confetti ── */
+function Confetti({fire}){
+  const ref=useRef(null);
+  useEffect(()=>{
+    if(!fire)return;
+    const c=ref.current;if(!c)return;
+    const ctx=c.getContext("2d");
+    const W=c.width=c.offsetWidth,H=c.height=c.offsetHeight;
+    const cols=["#3b7bd6","#2faa6b","#e8821e","#8b5cf6","#e0457b","#d9a400"];
+    const bits=Array.from({length:100},()=>({x:W/2,y:H/3,r:4+Math.random()*6,vx:(Math.random()-.5)*14,vy:-6-Math.random()*10,c:cols[(Math.random()*cols.length)|0],rot:Math.random()*6,vr:(Math.random()-.5)*.4}));
+    let f=0,raf;
+    const loop=()=>{ctx.clearRect(0,0,W,H);bits.forEach(b=>{b.vy+=.35;b.x+=b.vx;b.y+=b.vy;b.rot+=b.vr;ctx.save();ctx.translate(b.x,b.y);ctx.rotate(b.rot);ctx.fillStyle=b.c;ctx.fillRect(-b.r/2,-b.r/2,b.r,b.r*1.6);ctx.restore();});f++;if(f<110)raf=requestAnimationFrame(loop);else ctx.clearRect(0,0,W,H);};
+    loop();return()=>cancelAnimationFrame(raf);
+  },[fire]);
+  return <canvas ref={ref} style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",zIndex:50}}/>;
+}
+
+/* ── Gauge ── */
+function Gauge({pct,done,possible,color,glow,emoji,label,unit}){
+  const cx=70,cy=64,r=52;
+  const[lx,ly]=polar(cx,cy,r,0),[rx,ry]=polar(cx,cy,r,100),[vx,vy]=polar(cx,cy,r,pct),[nx,ny]=polar(cx,cy,r-13,pct);
+  const track=`M ${lx} ${ly} A ${r} ${r} 0 0 1 ${rx} ${ry}`;
+  const val=`M ${lx} ${ly} A ${r} ${r} 0 0 1 ${vx} ${vy}`;
+  const ticks=[];for(let i=0;i<=8;i++){const p=i/8*100;const[ox,oy]=polar(cx,cy,r+1,p);const[ix,iy]=polar(cx,cy,r-5,p);ticks.push(<line key={i} x1={ox} y1={oy} x2={ix} y2={iy} stroke="#3a4254" strokeWidth="2"/>);}
+  return(
+    <div style={{flex:1,minWidth:92,textAlign:"center"}}>
+      <svg viewBox="0 0 140 82" style={{width:"100%",display:"block"}}>
+        <path d={track} fill="none" stroke="#2a3142" strokeWidth="9" strokeLinecap="round"/>
+        {ticks}
+        {pct>1&&<path d={val} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round" style={{filter:`drop-shadow(0 0 5px ${glow})`}}/>}
+        <line x1={cx} y1={cy} x2={nx} y2={ny} stroke="#fff" strokeWidth="3.2" strokeLinecap="round" style={{filter:`drop-shadow(0 0 4px ${glow})`}}/>
+        <circle cx={cx} cy={cy} r="5.5" fill="#fff"/>
+        <text x={cx} y={cy-13} textAnchor="middle" fontFamily="Baloo 2,sans-serif" fontWeight="800" fontSize="23" fill="#fff">{Math.round(pct)}</text>
+        <text x={cx} y={cy-2} textAnchor="middle" fontFamily="Nunito,sans-serif" fontWeight="800" fontSize="9" fill="#8b94a8">%</text>
+      </svg>
+      <div style={{fontSize:18,marginTop:2}}>{emoji}</div>
+      <div style={{fontFamily:"'Baloo 2',cursive",fontWeight:700,fontSize:13,color:"#eef2f9"}}>{label}</div>
+      <div style={{fontSize:10.5,color:"#8b94a8",fontWeight:700}}>{possible>0?`${done}/${possible} ${unit}`:`add ${unit}`}</div>
+    </div>
+  );
+}
+
+/* ── PinBoxes ── */
+function PinBoxes({value,onChange,onComplete}){
+  const refs=useRef([]);
+  const tap=(i,e)=>{
+    const v=e.target.value.replace(/\D/g,"").slice(-1);
+    if(!v)return;
+    const arr=[...(value+"    ").slice(0,4)];
+    arr[i]=v;
+    const nv=arr.join("").trimEnd();
+    onChange(nv);
+    if(i<3)refs.current[i+1]?.focus();
+    if(nv.length===4&&onComplete)onComplete(nv);
+  };
+  const keydn=(i,e)=>{
+    if(e.key==="Backspace"){
+      const arr=[...(value+"    ").slice(0,4)];
+      arr[i]=" ";
+      onChange(arr.join("").trimEnd());
+      if(!value[i]&&i>0)refs.current[i-1]?.focus();
+    }
+  };
+  return(
+    <div style={{display:"flex",gap:10,justifyContent:"center",margin:"16px 0"}}>
+      {[0,1,2,3].map(i=>(
+        <input key={i} ref={el=>refs.current[i]=el}
+          type="password" inputMode="numeric" maxLength="1"
+          value={value[i]||""}
+          onChange={e=>tap(i,e)} onKeyDown={e=>keydn(i,e)}
+          style={{width:54,height:62,textAlign:"center",fontSize:30,fontWeight:800,border:"2px solid #e8e1d0",borderRadius:14,outline:"none",background:"#fff",color:"#3a3326"}}
+        />
+      ))}
+    </div>
+  );
+}
+
+/* ── PinModal (verify) ── */
+function PinModal({reason,pin,onOk,onCancel,onForgot}){
+  const[val,setVal]=useState("");
+  const[err,setErr]=useState("");
+  const check=v=>{if(v===pin){onOk();}else{setErr("Wrong PIN, try again");setVal("");}};
+  return(
+    <div style={S.ov}>
+      <div style={{...S.modal,maxWidth:320,textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:4}}>🔐</div>
+        <h2 style={{...S.h2,fontSize:18,margin:"0 0 4px"}}>{reason}</h2>
+        <p style={{...S.mu,fontSize:13}}>Enter your 4-digit parent PIN</p>
+        <PinBoxes value={val} onChange={setVal} onComplete={check}/>
+        {err&&<p style={{color:"#d9534f",fontWeight:800,fontSize:13,margin:"-10px 0 8px"}}>{err}</p>}
+        <button style={{...S.smBtn,width:"100%"}} onClick={onCancel}>Cancel</button>
+        <button style={S.forgotBtn} onClick={onForgot}>Forgot PIN? Reset app</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── PinSetup (create) ── */
+function PinSetup({title,onDone,onCancel}){
+  const[phase,setPhase]=useState("a");
+  const[a,setA]=useState("");
+  const[b,setB]=useState("");
+  const[err,setErr]=useState("");
+  const doneA=v=>{setA(v);setPhase("b");};
+  const doneB=v=>{
+    if(v===a){onDone(v);}
+    else{setErr("PINs don't match — start again");setA("");setB("");setPhase("a");}
+  };
+  return(
+    <div style={S.ov}>
+      <div style={{...S.modal,maxWidth:320,textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:4}}>🛡️</div>
+        <h2 style={{...S.h2,fontSize:18,margin:"0 0 4px"}}>{title||"Create parent PIN"}</h2>
+        <p style={{...S.mu,fontSize:13}}>{phase==="a"?"Choose a 4-digit PIN only you know":"Type it again to confirm"}</p>
+        <PinBoxes value={phase==="a"?a:b} onChange={phase==="a"?setA:setB} onComplete={phase==="a"?doneA:doneB}/>
+        {err&&<p style={{color:"#d9534f",fontWeight:800,fontSize:13,margin:"-10px 0 8px"}}>{err}</p>}
+        {onCancel&&<button style={{...S.smBtn,marginTop:4}} onClick={onCancel}>Cancel</button>}
+      </div>
+    </div>
+  );
+}
+
+/* ── Pending modal ── */
+function PendingModal({task,onApprove,onUntick,onClose}){
+  return(
+    <div style={S.ov}>
+      <div style={{...S.modal,maxWidth:320,textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:4}}>⏳</div>
+        <h2 style={{...S.h2,fontSize:18,margin:"0 0 8px"}}>Waiting for approval</h2>
+        <p style={S.mu}><b>{task.title}</b> has been ticked and is waiting for a parent to confirm it was done.</p>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:16}}>
+          <button style={{...S.primBtn,background:"#1f9d63"}} onClick={onApprove}>{I.shield(16,"#fff")} Parent approve (PIN)</button>
+          <button style={{...S.smBtn,width:"100%",color:"#d9534f"}} onClick={onUntick}>Remove tick — not done</button>
+          <button style={{...S.smBtn,width:"100%"}} onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Toast ── */
+function Toast({msg}){
+  if(!msg)return null;
+  return <div style={{position:"fixed",bottom:76,left:"50%",transform:"translateX(-50%)",background:"#1c2230",color:"#e7ecf5",padding:"10px 18px",borderRadius:20,fontWeight:700,fontSize:13,zIndex:200,boxShadow:"0 4px 16px rgba(0,0,0,.3)",pointerEvents:"none",whiteSpace:"nowrap"}}>🕐 {msg}</div>;
+}
+
+/* ── small components ── */
+function Ring({pct,color,done,total}){
+  const r=34,c=2*Math.PI*r;
+  return(
+    <div style={{position:"relative",width:84,height:84,flexShrink:0}}>
+      <svg width="84" height="84">
+        <circle cx="42" cy="42" r={r} fill="none" stroke="#efeadd" strokeWidth="9"/>
+        <circle cx="42" cy="42" r={r} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c-(c*pct)/100} transform="rotate(-90 42 42)" style={{transition:"stroke-dashoffset .5s cubic-bezier(.4,1.4,.5,1)"}}/>
+      </svg>
+      <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+        <span style={{fontFamily:"Baloo 2",fontWeight:800,fontSize:20,color}}>{pct}%</span>
+        <span style={{fontSize:11,color:"#9a948a",fontWeight:700}}>{done}/{total}</span>
+      </div>
+    </div>
+  );
+}
+function Bdg({emoji,value,label,bg,fg}){
+  return(
+    <div style={{background:bg,borderRadius:14,padding:"8px 12px",display:"flex",alignItems:"center",gap:8,flex:1}}>
+      <span style={{fontSize:18}}>{emoji}</span>
+      <div style={{lineHeight:1.05}}>
+        <div style={{fontFamily:"Baloo 2",fontWeight:800,fontSize:17,color:fg}}>{value}</div>
+        <div style={{fontSize:10.5,color:fg,opacity:.8,fontWeight:700}}>{label}</div>
+      </div>
+    </div>
+  );
+}
+function MHead({title,onClose}){
+  return <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}><h2 style={{...S.h2,margin:0,fontSize:20}}>{title}</h2><button onClick={onClose} style={S.icnBtn}>{I.X()}</button></div>;
+}
+
+/* ── SettingsModal ── */
+function SettingsModal({settings,onSave,onClose,onChangePin}){
+  const[cur,setCur]=useState(settings.currency);
+  const[bud,setBud]=useState(String(settings.weeklyBudget));
+  const[pt,setPt]=useState(JSON.parse(JSON.stringify(settings.pt||DEF_PT)));
+  const b=parseFloat(bud)||0;
+  const upt=(p,f,v)=>setPt(x=>({...x,[p]:{...x[p],[f]:v}}));
+  return(
+    <div style={S.ov}>
+      <div style={S.modal}>
+        <MHead title="⚙️ Settings" onClose={onClose}/>
+        <div style={S.fLbl}>Currency symbol</div>
+        <input value={cur} onChange={e=>setCur(e.target.value.slice(0,5))} style={{...S.inp,maxWidth:120}}/>
+        <div style={S.fLbl}>Full week allowance</div>
+        <input type="number" step="50" min="0" inputMode="numeric" value={bud} onChange={e=>setBud(e.target.value)} style={S.inp}/>
+        <div style={{background:"#eef7f0",borderRadius:12,padding:"8px 12px",marginTop:6,fontSize:13,fontWeight:700,color:"#2faa6b"}}>Complete everything all week = {cur}{Math.round(b)}</div>
+        <div style={S.fLbl}>🕌 Prayer time windows</div>
+        <p style={{...S.mu,fontSize:12,marginBottom:8}}>Kids can only tick a prayer during its window. Adjust to your local times.</p>
+        {PRAYERS.map(p=>(
+          <div key={p} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+            <span style={{width:58,fontWeight:800,fontSize:13,color:"#3a3326"}}>{p}</span>
+            <input type="time" value={(pt[p]||DEF_PT[p]).s} onChange={e=>upt(p,"s",e.target.value)} style={{...S.inp,flex:1,padding:"7px 8px",fontSize:13}}/>
+            <span style={{color:"#9a948a",fontSize:12}}>–</span>
+            <input type="time" value={(pt[p]||DEF_PT[p]).e} onChange={e=>upt(p,"e",e.target.value)} style={{...S.inp,flex:1,padding:"7px 8px",fontSize:13}}/>
+          </div>
+        ))}
+        <div style={{borderTop:"1.5px dashed #e6e0d2",marginTop:14,paddingTop:12}}>
+          <div style={S.fLbl}>🔐 Parent PIN</div>
+          {settings.pin?(
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{flex:1,fontSize:13,fontWeight:700,color:"#2faa6b"}}>PIN is set ✓</span>
+              <button style={{...S.smBtn,background:"#f7f1e4"}} onClick={onChangePin}>Change PIN</button>
+            </div>
+          ):(
+            <div>
+              <p style={{...S.mu,fontSize:12,color:"#d9534f",marginBottom:8}}>⚠️ No PIN — kids can change settings!</p>
+              <button style={{...S.primBtn,background:"#8b5cf6"}} onClick={onChangePin}>{I.shield(16,"#fff")} Set parent PIN now</button>
+            </div>
+          )}
+        </div>
+        <button style={{...S.primBtn,background:"#2faa6b",marginTop:16}} onClick={()=>onSave({currency:cur||"Rs ",weeklyBudget:Math.max(0,b),pt})}>Save settings</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── ManageModal ── */
+function ManageModal({kid,tasks,onClose,onAdd,onToggleAppr,onDel,onDelKid}){
+  const[title,setTitle]=useState("");
+  const[cat,setCat]=useState("salah");
+  const[appr,setAppr]=useState(true);
+  const[confirmDel,setConfirmDel]=useState(false);
+  const changeCat=k=>{setCat(k);setAppr(k==="salah");};
+  return(
+    <div style={S.ov}>
+      <div style={S.modal}>
+        <MHead title={`${kid.emoji} ${kid.name}'s quests`} onClose={onClose}/>
+        <div style={{background:"#faf7ef",borderRadius:14,padding:12,marginBottom:14}}>
+          <input placeholder="New quest, e.g. Read Quran" value={title} onChange={e=>setTitle(e.target.value)} style={{...S.inp,marginBottom:8}} onKeyDown={e=>{if(e.key==="Enter"&&title.trim()){onAdd(title.trim(),cat,appr);setTitle("");}}}/>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:8}}>
+            {Object.entries(CATS).map(([k,c])=><button key={k} onClick={()=>changeCat(k)} style={{border:"none",cursor:"pointer",borderRadius:20,padding:"5px 10px",fontWeight:800,fontSize:12,background:cat===k?c.color:c.soft,color:cat===k?"#fff":c.color}}>{c.emoji} {c.label}</button>)}
+          </div>
+          <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13,fontWeight:700,color:"#7d7666",marginBottom:10}}>
+            <input type="checkbox" checked={appr} onChange={e=>setAppr(e.target.checked)} style={{width:16,height:16}}/>
+            {I.shield(14,"#8b5cf6")} Requires parent approval to count
+          </label>
+          <button disabled={!title.trim()} style={{...S.primBtn,background:title.trim()?kid.color:"#cfc9bc"}} onClick={()=>{onAdd(title.trim(),cat,appr);setTitle("");}}>{I.plus(16)} Add quest</button>
+        </div>
+        <div style={{maxHeight:260,overflowY:"auto",display:"flex",flexDirection:"column",gap:6}}>
+          {tasks.length===0&&<p style={{...S.mu,textAlign:"center"}}>No quests yet — add one above.</p>}
+          {tasks.map(t=>{const c=CATS[t.category]||CATS.fun;return(
+            <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,background:"#fff",border:"1.5px solid #ece7db",borderRadius:12,padding:"8px 10px"}}>
+              <span style={{fontSize:15}}>{c.emoji}</span>
+              <span style={{flex:1,fontWeight:700,fontSize:13,color:"#39342b"}}>{t.title}</span>
+              <button title={t.requiresApproval?"Approval ON (tap to toggle)":"Approval OFF (tap to toggle)"} onClick={()=>onToggleAppr(t.id)} style={{...S.icnBtn,color:t.requiresApproval?"#8b5cf6":"#d0ccc4"}}>{I.shield(15,t.requiresApproval?"#8b5cf6":"#d0ccc4")}</button>
+              <button onClick={()=>onDel(t.id)} style={S.icnBtn}>{I.trash()}</button>
+            </div>
+          );})}
+        </div>
+        <p style={{fontSize:11,color:"#9a948a",fontWeight:600,margin:"8px 0 0"}}>🛡️ purple = needs approval · tap shield to toggle</p>
+        <div style={{borderTop:"1.5px dashed #e6e0d2",marginTop:14,paddingTop:12}}>
+          {!confirmDel?(
+            <button onClick={()=>setConfirmDel(true)} style={S.dangerLnk}>Remove {kid.name} from app</button>
+          ):(
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <span style={{fontSize:12,flex:1,color:"#8c1d18"}}>Delete {kid.name} and all data?</span>
+              <button onClick={()=>setConfirmDel(false)} style={S.smBtn}>Cancel</button>
+              <button onClick={()=>onDelKid(kid.id)} style={{...S.smBtn,background:"#d9534f",color:"#fff"}}>Delete</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── AddKidButton ── */
+function AddKidBtn({onAdd,hasKids,requirePin}){
+  const[open,setOpen]=useState(false);
+  const[name,setName]=useState("");
+  const[emoji,setEmoji]=useState(AVATARS[0]);
+  const[color,setColor]=useState(COLORS[0]);
+  const tryOpen=()=>hasKids?requirePin("Add a child",()=>setOpen(true)):setOpen(true);
+  if(!open)return <button onClick={tryOpen} style={S.addChip}>{I.plus(20,"#b09a63")}</button>;
+  return(
+    <div style={S.ov}>
+      <div style={{...S.modal,maxWidth:360}}>
+        <MHead title="Add a hero" onClose={()=>setOpen(false)}/>
+        <input autoFocus placeholder="Child's name" value={name} onChange={e=>setName(e.target.value)} style={S.inp}/>
+        <div style={S.fLbl}>Pick an avatar</div>
+        <div style={S.pickG}>{AVATARS.map(a=><button key={a} onClick={()=>setEmoji(a)} style={{...S.pickE,outline:emoji===a?`3px solid ${color}`:"3px solid transparent"}}>{a}</button>)}</div>
+        <div style={S.fLbl}>Pick a colour</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>{COLORS.map(c=><button key={c} onClick={()=>setColor(c)} style={{width:32,height:32,borderRadius:10,background:c,border:"none",cursor:"pointer",outline:color===c?"3px solid #2b2b33":"3px solid transparent",outlineOffset:2}}/>)}</div>
+        <button disabled={!name.trim()} style={{...S.primBtn,background:name.trim()?color:"#cfc9bc"}} onClick={()=>{onAdd(name.trim(),emoji,color);setOpen(false);setName("");}}>Create hero</button>
+        {!hasKids&&<p style={{...S.mu,fontSize:12,marginTop:8,textAlign:"center"}}>Starter quests include all 5 prayers (approval required by default).</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────── STYLES ─────────────────── */
+const S={
+  shell: {maxWidth:480,margin:"0 auto",padding:"20px 16px 36px",fontFamily:"Nunito,sans-serif",minHeight:"100vh"},
+  header:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16},
+  kicker:{fontWeight:800,fontSize:11,letterSpacing:2,color:"#c79b3f"},
+  h1:    {fontFamily:"'Baloo 2',cursive",fontWeight:800,fontSize:30,margin:"2px 0 0",color:"#3a3326",lineHeight:1},
+  h2:    {fontFamily:"'Baloo 2',cursive",fontWeight:700,fontSize:22,margin:"0 0 6px",color:"#3a3326"},
+  gBtn:  {border:"1.5px solid #e8e1d0",background:"#fffdf6",borderRadius:14,width:44,height:44,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"},
+  card:  {background:"#fffdf8",borderRadius:22,boxShadow:"0 6px 20px rgba(120,100,60,.08)",border:"1.5px solid #f0e9d8"},
+  kRow:  {display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"},
+  kChip: {border:"none",cursor:"pointer",borderRadius:16,padding:"8px 14px",display:"flex",alignItems:"center",gap:7,fontFamily:"'Baloo 2',cursive",fontWeight:700,fontSize:15,transition:"all .15s",position:"relative"},
+  addChip:{border:"2px dashed #d8cdb0",background:"#fffdf6",color:"#b09a63",cursor:"pointer",borderRadius:16,width:42,height:42,display:"flex",alignItems:"center",justifyContent:"center"},
+  dNav:  {display:"flex",alignItems:"center",justifyContent:"space-between",background:"#f7f1e4",borderRadius:12,padding:"4px 6px"},
+  nBtn:  {border:"none",background:"transparent",cursor:"pointer",display:"flex",padding:4},
+  wStrip:{display:"flex",gap:2,marginTop:16,paddingTop:14,borderTop:"1.5px solid #f2ecdd"},
+  dCard: {background:"linear-gradient(160deg,#222a3a,#161b27)",borderRadius:22,padding:"14px 14px 12px",marginBottom:14,border:"1px solid #2c3446",boxShadow:"0 8px 24px rgba(20,26,40,.3),inset 0 1px 0 rgba(255,255,255,.04)"},
+  dTitl: {display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,fontFamily:"'Baloo 2',cursive",fontWeight:700,fontSize:16,color:"#eef2f9"},
+  dFoot: {marginTop:10,fontSize:11,color:"#7e879a",fontWeight:600,textAlign:"center"},
+  dBtn:  {width:"100%",marginTop:10,border:"1px solid #34d39955",background:"#1d2735",borderRadius:12,padding:"9px",cursor:"pointer",color:"#34d399",fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6},
+  lkBan: {background:"#fef3c7",border:"1.5px solid #f9c94e",borderRadius:14,padding:"9px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:8,cursor:"pointer"},
+  cHead: {display:"flex",alignItems:"center",gap:7,fontFamily:"'Baloo 2',cursive",fontWeight:700,fontSize:15,marginBottom:8,paddingLeft:2},
+  tRow:  {display:"flex",alignItems:"center",gap:12,width:"100%",textAlign:"left",border:"2px solid",borderRadius:16,padding:"12px 14px",cursor:"pointer",transition:"all .15s"},
+  chk:   {width:28,height:28,borderRadius:9,border:"2.5px solid",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"},
+  ppill: {background:"#2faa6b",color:"#fff",fontFamily:"'Baloo 2',cursive",fontWeight:800,fontSize:12,padding:"3px 10px",borderRadius:20},
+  paidR: {display:"flex",alignItems:"center",justifyContent:"space-between",background:"#eef7f0",borderRadius:12,padding:"10px 14px"},
+  undoB: {border:"none",background:"transparent",color:"#9a948a",cursor:"pointer",fontWeight:800,fontSize:13,textDecoration:"underline"},
+  mgBtn: {width:"100%",marginTop:8,border:"1.5px solid #e8e1d0",background:"#fffdf6",borderRadius:16,padding:"12px",cursor:"pointer",color:"#7d7666",fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8},
+  primBtn:{border:"none",borderRadius:14,padding:"12px 16px",cursor:"pointer",width:"100%",color:"#fff",fontFamily:"'Baloo 2',cursive",fontWeight:700,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8},
+  ov:    {position:"fixed",inset:0,background:"rgba(40,34,22,.45)",backdropFilter:"blur(3px)",display:"flex",alignItems:"center",justifyContent:"center",padding:16,zIndex:100},
+  modal: {background:"#fffdf8",borderRadius:22,padding:20,width:"100%",maxWidth:420,boxShadow:"0 20px 50px rgba(0,0,0,.25)",maxHeight:"90vh",overflowY:"auto"},
+  inp:   {width:"100%",border:"2px solid #e8e1d0",borderRadius:12,padding:"11px 14px",fontWeight:700,fontSize:15,outline:"none",background:"#fff",color:"#39342b"},
+  fLbl:  {fontWeight:800,fontSize:12,color:"#9a948a",margin:"14px 0 8px",letterSpacing:.5},
+  pickG: {display:"flex",gap:6,flexWrap:"wrap",marginBottom:4},
+  pickE: {fontSize:22,width:40,height:40,borderRadius:10,border:"none",background:"#f7f1e4",cursor:"pointer",outlineOffset:2},
+  icnBtn:{border:"none",background:"transparent",cursor:"pointer",padding:4,display:"flex"},
+  smBtn: {border:"1.5px solid #e0d9c8",background:"#fff",borderRadius:10,padding:"6px 12px",cursor:"pointer",fontWeight:800,fontSize:13},
+  dangerLnk:{border:"none",background:"transparent",color:"#c0392b",cursor:"pointer",fontWeight:800,fontSize:13,textDecoration:"underline",padding:0},
+  forgotBtn:{border:"none",background:"transparent",color:"#9a948a",cursor:"pointer",fontWeight:700,fontSize:12,marginTop:8,textDecoration:"underline",display:"block",textAlign:"center"},
+  mu:    {color:"#9a948a",fontWeight:600,fontSize:14,margin:"4px 0"},
+  noPIN: {background:"#fff0f0",border:"1.5px solid #fca5a5",borderRadius:14,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:8,cursor:"pointer"},
+  footer:{textAlign:"center",color:"#b3ab9d",fontSize:12,fontWeight:600,marginTop:20},
+};
+
+/* ─────────────────── APP ─────────────────── */
+function App(){
+  const[loaded,setLoaded]=useState(false);
+  const[kids,setKids]=useState([]);
+  const[tasks,setTasks]=useState([]);
+  const[comp,setComp]=useState({});   // completions: {date:{taskId:true}}
+  const[appr,setAppr]=useState({});   // approvals:   {date:{taskId:"approved"}}
+  const[settings,setSettings]=useState(DEF_SETTINGS);
+  const[paidWks,setPaidWks]=useState({});
+
+  const[activeKid,setActiveKid]=useState(null);
+  const[vDate,setVDate]=useState(tod());
+  const[unlocked,setUnlocked]=useState(new Set()); // session-unlocked past dates
+  const[manageOpen,setManageOpen]=useState(false);
+  const[settOpen,setSettOpen]=useState(false);
+  const[pinModal,setPinModal]=useState(null);   // {reason,onOk,onCancel}
+  const[pinSetup,setPinSetup]=useState(null);   // {title,onDone,onCancel?}
+  const[pendAct,setPendAct]=useState(null);     // {task,date}
+  const[confK,setConfK]=useState(0);
+  const[toast,setToast]=useState("");
+  const prevDone=useRef({});
+  const toastTmr=useRef(null);
+
+  // load
+  useEffect(()=>{
+    const d=load();
+    if(d){
+      setKids(d.kids||[]);setTasks(d.tasks||[]);setComp(d.comp||{});setAppr(d.appr||{});
+      setSettings({...DEF_SETTINGS,...(d.settings||{})});setPaidWks(d.paidWks||{});
+      setActiveKid(d.kids&&d.kids[0]?d.kids[0].id:null);
+    }
+    setLoaded(true);
+  },[]);
+
+  // save
+  useEffect(()=>{if(!loaded)return;persist({kids,tasks,comp,appr,settings,paidWks});},[kids,tasks,comp,appr,settings,paidWks,loaded]);
+
+  const showToast=useCallback(msg=>{setToast(msg);clearTimeout(toastTmr.current);toastTmr.current=setTimeout(()=>setToast(""),3200);},[]);
+
+  const requirePin=useCallback((reason,onOk,onCancel)=>{
+    if(!settings.pin){
+      setPinSetup({title:"Set a parent PIN first",onDone:p=>{setSettings(s=>({...s,pin:p}));setPinSetup(null);onOk();},onCancel:()=>{setPinSetup(null);onCancel&&onCancel();}});
+    }else{
+      setPinModal({reason,onOk:()=>{setPinModal(null);onOk();},onCancel:()=>{setPinModal(null);onCancel&&onCancel();}});
+    }
+  },[settings.pin]);
+
+  const vKey=dk(vDate);
+  const isToday=vKey===dk(tod());
+  const isPayday=new Date().getDay()===5;
+  const isLocked=!isToday&&!unlocked.has(vKey);
+
+  const kidTasks=useMemo(()=>tasks.filter(t=>t.kidId===activeKid),[tasks,activeKid]);
+
+  // effective completion (counts for earnings)
+  const effDone=useCallback((taskId,date,needsAppr)=>{
+    if(needsAppr)return !!(appr[date]&&appr[date][taskId]==="approved");
+    return !!(comp[date]&&comp[date][taskId]);
+  },[comp,appr]);
+
+  const doneCount=useMemo(()=>kidTasks.filter(t=>effDone(t.id,vKey,t.requiresApproval)).length,[kidTasks,vKey,effDone]);
+  const pct=kidTasks.length?Math.round((doneCount/kidTasks.length)*100):0;
+  const money=n=>settings.currency+Math.round(Number(n)||0);
+
+  // streak + stars
+  const{streak,totalStars}=useMemo(()=>{
+    if(!activeKid)return{streak:0,totalStars:0};
+    const mt=tasks.filter(t=>t.kidId===activeKid);
+    let stars=0;
+    mt.forEach(t=>Object.keys(comp).forEach(date=>{if(effDone(t.id,date,t.requiresApproval))stars++;}));
+    const dc=d=>{if(!mt.length)return false;return mt.every(t=>effDone(t.id,dk(d),t.requiresApproval));};
+    let s=0,cur=tod();
+    if(!dc(cur))cur=add(cur,-1);
+    while(dc(cur)){s++;cur=add(cur,-1);}
+    return{streak:s,totalStars:stars};
+  },[comp,appr,tasks,activeKid,effDone]);
+
+  // dashboard gauges
+  const dash=useMemo(()=>{
+    if(!activeKid)return null;
+    const ws=wkSat(tod()),te=tod();
+    const days=Math.min(7,Math.round((te-ws)/86400000)+1);
+    const mt=tasks.filter(t=>t.kidId===activeKid);
+    const res={};
+    Object.entries(GROUPS).forEach(([k,g])=>{
+      const gt=mt.filter(t=>g.cats.includes(t.category));
+      let done=0;
+      for(let d=new Date(ws);d<=te;d=add(d,1)){const date=dk(d);gt.forEach(t=>{if(effDone(t.id,date,t.requiresApproval))done++;});}
+      const possible=gt.length*days;
+      res[k]={done,possible,count:gt.length,pct:possible?Math.min(100,done/possible*100):0};
+    });
+    return res;
+  },[comp,appr,tasks,activeKid,effDone]);
+
+  // weekly earnings
+  const weeks=useMemo(()=>{
+    if(!activeKid)return[];
+    const mt=tasks.filter(t=>t.kidId===activeKid);
+    const budget=settings.weeklyBudget||0;
+    const out=[];
+    let ws=wkSat(tod());
+    for(let i=0;i<6;i++){
+      const we=add(ws,6);
+      let ticks=0;
+      for(let d=new Date(ws);d<=we;d=add(d,1)){const date=dk(d);mt.forEach(t=>{if(effDone(t.id,date,t.requiresApproval))ticks++;});}
+      const max=mt.length*7,ratio=max?Math.min(1,ticks/max):0;
+      out.push({ws:new Date(ws),we,ticks,ratio,amount:ratio*budget,key:dk(ws)});
+      ws=add(ws,-7);
+    }
+    return out;
+  },[comp,appr,tasks,activeKid,settings,effDone]);
+
+  // pending count per kid (for badge)
+  const pending=useMemo(()=>{
+    const map={};
+    kids.forEach(k=>{
+      const at=tasks.filter(t=>t.kidId===k.id&&t.requiresApproval);
+      let n=0;
+      const ws=wkSat(tod());
+      for(let d=new Date(ws);d<=tod();d=add(d,1)){
+        const date=dk(d);
+        at.forEach(t=>{if(comp[date]&&comp[date][t.id]&&!(appr[date]&&appr[date][t.id]==="approved"))n++;});
+      }
+      map[k.id]=n;
+    });
+    return map;
+  },[comp,appr,tasks,kids]);
+
+  // 7-day strip
+  const wDays=useMemo(()=>{
+    const arr=[];
+    for(let i=6;i>=0;i--){
+      const d=add(tod(),-i);
+      const mt=tasks.filter(t=>t.kidId===activeKid);
+      const done=mt.filter(t=>effDone(t.id,dk(d),t.requiresApproval)).length;
+      arr.push({date:d,done,total:mt.length,complete:mt.length>0&&done===mt.length});
+    }
+    return arr;
+  },[comp,appr,tasks,activeKid,effDone]);
+
+  // confetti
+  useEffect(()=>{
+    if(!activeKid||kidTasks.length===0||!isToday)return;
+    const all=doneCount===kidTasks.length;
+    const key=activeKid+vKey;
+    if(all&&!prevDone.current[key])setConfK(k=>k+1);
+    prevDone.current[key]=all;
+  },[doneCount,kidTasks.length,activeKid,vKey,isToday]);
+
+  /* ── task tap handler ── */
+  const tapTask=useCallback(task=>{
+    // locked past day → ask PIN to unlock
+    if(isLocked){
+      requirePin(`Unlock ${fmt(vDate)} for editing`,()=>{setUnlocked(s=>new Set([...s,vKey]));showToast(`${fmt(vDate)} unlocked — you can edit tasks.`);});
+      return;
+    }
+    // salah time window — only block ticking ON today
+    if(isToday&&task.category==="salah"){
+      const ticked=!!(comp[vKey]&&comp[vKey][task.id]);
+      if(!ticked){
+        const pw=(settings.pt||DEF_PT)[task.title];
+        if(pw){
+          const now=nowMins();
+          if(now<toMins(pw.s)||now>toMins(pw.e)){
+            showToast(`${task.title} window: ${pw.s} – ${pw.e}`);
+            return;
+          }
+        }
+      }
+    }
+    const ticked=!!(comp[vKey]&&comp[vKey][task.id]);
+    const approved=!!(appr[vKey]&&appr[vKey][task.id]==="approved");
+    const isPending=task.requiresApproval&&ticked&&!approved;
+
+    // tap already-approved → need PIN to remove approval
+    if(task.requiresApproval&&approved){
+      requirePin("Remove approval",()=>{setAppr(prev=>{const day={...(prev[vKey]||{})};delete day[task.id];return{...prev,[vKey]:day};});});
+      return;
+    }
+    // tap pending → show action modal
+    if(isPending){setPendAct({task,date:vKey});return;}
+    // normal toggle
+    setComp(prev=>{const day={...(prev[vKey]||{})};if(day[task.id])delete day[task.id];else day[task.id]=true;return{...prev,[vKey]:day};});
+  },[isLocked,isToday,vDate,vKey,comp,appr,settings,requirePin,showToast]);
+
+  const approveTask=(taskId,date)=>requirePin("Approve task",()=>{setAppr(prev=>{const day={...(prev[date]||{})};day[taskId]="approved";return{...prev,[date]:day};});setPendAct(null);});
+
+  /* ── actions ── */
+  const addKid=(name,emoji,color)=>{const id=uid();setKids(p=>[...p,{id,name,emoji,color}]);setTasks(p=>[...p,...STARTER.map(t=>({id:uid(),kidId:id,...t}))]);setActiveKid(id);};
+  const delKid=id=>{const r=kids.filter(k=>k.id!==id);setKids(r);setTasks(p=>p.filter(t=>t.kidId!==id));setActiveKid(r[0]?r[0].id:null);setManageOpen(false);};
+  const addTask=(title,cat,needsAppr)=>setTasks(p=>[...p,{id:uid(),kidId:activeKid,title,category:cat,requiresApproval:!!needsAppr}]);
+  const delTask=id=>setTasks(p=>p.filter(t=>t.id!==id));
+  const togAppr=id=>setTasks(p=>p.map(t=>t.id===id?{...t,requiresApproval:!t.requiresApproval}:t));
+  const addPrayers=()=>{const have=new Set(tasks.filter(t=>t.kidId===activeKid&&t.category==="salah").map(t=>t.title));setTasks(p=>[...p,...PRAYERS.filter(n=>!have.has(n)).map(n=>({id:uid(),kidId:activeKid,title:n,category:"salah",requiresApproval:true}))]);};
+  const togPaid=wk=>{const k=`${activeKid}|${wk}`;setPaidWks(p=>{const n={...p};if(n[k])delete n[k];else n[k]=true;return n;});};
+
+  const kidObj=kids.find(k=>k.id===activeKid);
+  const current=weeks[0];
+  const prevWks=weeks.slice(1).filter(w=>w.ticks>0);
+  const openSett=()=>requirePin("Open Settings",()=>setSettOpen(true));
+  const openMgr=()=>requirePin("Manage Quests",()=>setManageOpen(true));
+  const markPaid=wk=>requirePin("Mark as paid",()=>togPaid(wk));
+
+  if(!loaded)return <div style={S.shell}><div style={{...S.card,textAlign:"center",padding:48}}>Loading…</div></div>;
+
+  return(
+    <div style={S.shell}>
+      {/* header */}
+      <div style={S.header}>
+        <div><div style={S.kicker}>DAILY QUEST</div><h1 style={S.h1}>Habit Heroes</h1></div>
+        <button style={S.gBtn} onClick={openSett}>{I.gear(20)}</button>
+      </div>
+
+      {/* no-PIN warning */}
+      {!settings.pin&&kids.length>0&&(
+        <div style={S.noPIN} onClick={()=>setPinSetup({title:"Create parent PIN",onDone:p=>{setSettings(s=>({...s,pin:p}));setPinSetup(null);},onCancel:()=>setPinSetup(null)})}>
+          {I.shield(18,"#d9534f")}
+          <span style={{flex:1,fontSize:13,fontWeight:700,color:"#b91c1c"}}>No PIN set — tap here to prevent kids changing their own scores.</span>
+        </div>
+      )}
+
+      {/* kid tabs */}
+      <div style={S.kRow}>
+        {kids.map(k=>{
+          const active=k.id===activeKid;
+          const p=pending[k.id]||0;
+          return(
+            <button key={k.id} onClick={()=>setActiveKid(k.id)} style={{...S.kChip,background:active?k.color:"#fff",color:active?"#fff":"#3a3a44",boxShadow:active?`0 6px 0 ${shade(k.color)}`:"0 4px 0 #e7e2d6",transform:active?"translateY(0)":"translateY(2px)"}}>
+              <span style={{fontSize:22}}>{k.emoji}</span><span>{k.name}</span>
+              {p>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#e0457b",color:"#fff",borderRadius:10,fontSize:10,fontWeight:800,padding:"1px 5px",minWidth:18,textAlign:"center"}}>{p}</span>}
+            </button>
+          );
+        })}
+        <AddKidBtn onAdd={addKid} hasKids={kids.length>0} requirePin={requirePin}/>
+      </div>
+
+      {!kidObj?(
+        <div style={{...S.card,textAlign:"center",padding:"48px 24px"}}>
+          <div style={{fontSize:56,marginBottom:8}}>👋</div>
+          <h2 style={S.h2}>Add your first hero!</h2>
+          <p style={S.mu}>Tap <b>+</b> to add a child. Starter quests include the 5 prayers with approval required.</p>
+        </div>
+      ):(
+        <React.Fragment>
+          {/* today ring */}
+          <div style={{position:"relative",...S.card,padding:20,marginBottom:14,overflow:"hidden"}}>
+            <Confetti key={confK} fire={confK>0}/>
+            <div style={{display:"flex",alignItems:"center",gap:18}}>
+              <Ring pct={pct} color={kidObj.color} done={doneCount} total={kidTasks.length}/>
+              <div style={{flex:1}}>
+                <div style={S.dNav}>
+                  <button style={S.nBtn} onClick={()=>setVDate(add(vDate,-1))}>{I.left()}</button>
+                  <span style={{fontFamily:"Baloo 2",fontWeight:700,fontSize:15,display:"flex",alignItems:"center",gap:5}}>
+                    {isToday?"Today":vDate.toLocaleDateString(undefined,{weekday:"short",day:"numeric",month:"short"})}
+                    {!isToday&&I.lock(12,isLocked?"#e8821e":"#2faa6b")}
+                  </span>
+                  <button style={{...S.nBtn,opacity:isToday?.35:1}} disabled={isToday} onClick={()=>!isToday&&setVDate(add(vDate,1))}>{I.right()}</button>
+                </div>
+                <div style={{display:"flex",gap:10,marginTop:10}}>
+                  <Bdg emoji="🔥" value={streak} label="day streak" bg="#fde3d6" fg="#e0651e"/>
+                  <Bdg emoji="⭐" value={totalStars} label="total deeds" bg="#fdf3cf" fg="#b78a00"/>
+                </div>
+              </div>
+            </div>
+            <div style={S.wStrip}>
+              {wDays.map((d,i)=>(
+                <div key={i} style={{textAlign:"center",flex:1}}>
+                  <div style={{fontSize:10,color:"#9a948a",fontWeight:700}}>{d.date.toLocaleDateString(undefined,{weekday:"narrow"})}</div>
+                  <div style={{margin:"4px auto 0",width:24,height:24,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",background:d.complete?kidObj.color:(d.done>0?kidObj.color+"33":"#f0ece2"),color:d.complete?"#fff":"#b3ab9d",fontSize:12,fontWeight:800}}>
+                    {d.complete?I.check(14):(d.total?d.done:"")}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* locked past-day banner */}
+          {isLocked&&(
+            <div style={S.lkBan} onClick={()=>requirePin(`Unlock ${fmt(vDate)}`,()=>setUnlocked(s=>new Set([...s,vKey])))}>
+              {I.lock(16,"#b45309")}
+              <span style={{flex:1,fontSize:13,fontWeight:700,color:"#92400e"}}>Past day is locked — tap to unlock for editing (PIN required)</span>
+            </div>
+          )}
+
+          {/* dashboard */}
+          {dash&&(
+            <div style={S.dCard}>
+              <div style={S.dTitl}>
+                <span>🚘 {kidObj.name}'s Dashboard</span>
+                <span style={{fontSize:11,color:"#8b94a8",fontWeight:700}}>THIS WEEK</span>
+              </div>
+              <div style={{display:"flex",gap:4}}>
+                <Gauge {...GROUPS.sawab}     pct={dash.sawab.pct}     done={dash.sawab.done}     possible={dash.sawab.possible}/>
+                <Gauge {...GROUPS.family}    pct={dash.family.pct}    done={dash.family.done}    possible={dash.family.possible}/>
+                <Gauge {...GROUPS.knowledge} pct={dash.knowledge.pct} done={dash.knowledge.done} possible={dash.knowledge.possible}/>
+              </div>
+              {dash.sawab.count===0&&<button style={S.dBtn} onClick={addPrayers}>{I.plus(15,"#34d399")} Add the 5 daily prayers</button>}
+              <div style={S.dFoot}>Gauges only rise on ✓ approved deeds · prayers blocked outside their time window</div>
+            </div>
+          )}
+
+          {/* allowance */}
+          {current&&(
+            <div style={{...S.card,padding:18,marginBottom:14,borderColor:isPayday?"#2faa6b":"#f0e9d8",borderWidth:isPayday?2:1.5}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                <span style={{fontFamily:"'Baloo 2',cursive",fontWeight:700,fontSize:16,color:"#3a3326"}}>💰 This week's allowance</span>
+                {isPayday&&<span style={S.ppill}>🎉 PAYDAY!</span>}
+              </div>
+              <div style={{fontFamily:"'Baloo 2',cursive",fontWeight:800,fontSize:38,color:"#2faa6b",lineHeight:1}}>{money(current.amount)}</div>
+              <div style={{...S.mu,marginTop:4}}>{Math.round(current.ratio*100)}% approved · full week = {money(settings.weeklyBudget)}</div>
+              <div style={{height:8,background:"#eef0e6",borderRadius:8,marginTop:8,overflow:"hidden"}}>
+                <div style={{height:"100%",width:`${current.ratio*100}%`,background:"#2faa6b",borderRadius:8,transition:"width .4s"}}/>
+              </div>
+              <div style={{fontSize:12,color:"#b09a63",fontWeight:700,marginTop:6}}>Week: {fmt(current.ws)} – {fmt(current.we)} (paid Friday)</div>
+              {paidWks[`${activeKid}|${current.key}`]?(
+                <div style={{...S.paidR,marginTop:12}}>
+                  <span style={{fontWeight:800,color:"#2faa6b"}}>{I.check(16,"#2faa6b")} Paid {money(current.amount)}</span>
+                  <button style={S.undoB} onClick={()=>markPaid(current.key)}>Undo</button>
+                </div>
+              ):(
+                <button style={{...S.primBtn,background:"#2faa6b",marginTop:12}} onClick={()=>markPaid(current.key)}>Mark {kidObj.name} paid {money(current.amount)}</button>
+              )}
+              {prevWks.length>0&&(
+                <div style={{marginTop:14,borderTop:"1.5px dashed #e6e0d2",paddingTop:10}}>
+                  <div style={{fontSize:11,fontWeight:800,color:"#9a948a",letterSpacing:.5,marginBottom:6}}>PREVIOUS WEEKS</div>
+                  {prevWks.map(w=>{const paid=!!paidWks[`${activeKid}|${w.key}`];return(
+                    <div key={w.key} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0"}}>
+                      <span style={{flex:1,fontSize:13,fontWeight:700,color:"#7d7666"}}>{fmt(w.ws)} – {fmt(w.we)} · {Math.round(w.ratio*100)}%</span>
+                      <span style={{fontWeight:800,fontSize:14,color:paid?"#b3ab9d":"#2faa6b"}}>{money(w.amount)}</span>
+                      <button style={{...S.smBtn,background:paid?"#eef4ee":"#fff",color:paid?"#2faa6b":"#7d7666"}} onClick={()=>markPaid(w.key)}>{paid?"Paid ✓":"Mark paid"}</button>
+                    </div>
+                  );})}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* tasks */}
+          {kidTasks.length===0?(
+            <div style={{...S.card,textAlign:"center",padding:32}}>
+              <p style={S.mu}>No quests yet for {kidObj.name}.</p>
+              <button style={{...S.primBtn,background:kidObj.color,marginTop:10}} onClick={openMgr}>Add quests</button>
+            </div>
+          ):(
+            Object.keys(CATS).map(catKey=>{
+              const list=kidTasks.filter(t=>t.category===catKey);
+              if(!list.length)return null;
+              const cat=CATS[catKey];
+              return(
+                <div key={catKey} style={{marginBottom:16}}>
+                  <div style={S.cHead}><span style={{fontSize:18}}>{cat.emoji}</span><span style={{color:cat.color}}>{cat.label}</span></div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {list.map(t=>{
+                      const ticked=!!(comp[vKey]&&comp[vKey][t.id]);
+                      const approved=!!(appr[vKey]&&appr[vKey][t.id]==="approved");
+                      const isPending=t.requiresApproval&&ticked&&!approved;
+                      const done=effDone(t.id,vKey,t.requiresApproval);
+                      let outsideWin=false;
+                      if(isToday&&t.category==="salah"&&!ticked){
+                        const pw=(settings.pt||DEF_PT)[t.title];
+                        if(pw){const now=nowMins();outsideWin=now<toMins(pw.s)||now>toMins(pw.e);}
+                      }
+                      const bg=isPending?"#fef3c7":done?cat.soft:"#fff";
+                      const bc=isPending?"#f9c94e":done?cat.color:outsideWin?"#e0d9c8":"#ece7db";
+                      return(
+                        <button key={t.id} onClick={()=>tapTask(t)} style={{...S.tRow,background:bg,borderColor:bc,opacity:outsideWin&&!ticked?.55:1}}>
+                          <span style={{...S.chk,background:isPending?"#f59e0b":done?cat.color:"#fff",borderColor:isPending?"#f59e0b":done?cat.color:"#d8d2c4"}}>
+                            {isPending?<span style={{fontSize:14}}>⏳</span>:done?I.check(18):outsideWin?I.clock(14,"#b09a63"):null}
+                          </span>
+                          <span style={{flex:1,fontWeight:700,fontSize:15,textAlign:"left",color:done?"#8c8576":outsideWin?"#b09a63":"#39342b",textDecoration:done?"line-through":"none"}}>
+                            {t.title}
+                            {t.requiresApproval&&!ticked&&!approved&&<span style={{fontSize:11,color:"#8b5cf6",marginLeft:5}}>🛡️</span>}
+                            {approved&&<span style={{fontSize:11,color:"#2faa6b",marginLeft:5}}>✓ approved</span>}
+                          </span>
+                          {outsideWin&&!ticked&&(settings.pt||DEF_PT)[t.title]&&(
+                            <span style={{fontSize:11,color:"#b09a63",fontWeight:700,whiteSpace:"nowrap"}}>{(settings.pt||DEF_PT)[t.title].s}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })
+          )}
+
+          <button style={S.mgBtn} onClick={openMgr}>{I.gear()} Manage {kidObj.name}'s quests</button>
+        </React.Fragment>
+      )}
+
+      {/* modals */}
+      {pinModal&&<PinModal reason={pinModal.reason} pin={settings.pin} onOk={pinModal.onOk} onCancel={pinModal.onCancel}
+        onForgot={()=>{setPinModal(null);if(window.confirm("This will reset your parent PIN. You'll need to set a new one.")){setSettings(s=>({...s,pin:null}));}}}/>}
+      {pinSetup&&<PinSetup title={pinSetup.title} onDone={pinSetup.onDone} onCancel={pinSetup.onCancel}/>}
+      {pendAct&&<PendingModal task={pendAct.task}
+        onClose={()=>setPendAct(null)}
+        onApprove={()=>approveTask(pendAct.task.id,pendAct.date)}
+        onUntick={()=>{setComp(p=>{const d={...(p[pendAct.date]||{})};delete d[pendAct.task.id];return{...p,[pendAct.date]:d};});setPendAct(null);}}/>}
+      {manageOpen&&kidObj&&<ManageModal kid={kidObj} tasks={kidTasks} onClose={()=>setManageOpen(false)} onAdd={addTask} onToggleAppr={togAppr} onDel={delTask} onDelKid={delKid}/>}
+      {settOpen&&<SettingsModal settings={settings} onClose={()=>setSettOpen(false)}
+        onSave={s=>{setSettings(p=>({...p,...s}));setSettOpen(false);}}
+        onChangePin={()=>{setSettOpen(false);setPinSetup({title:"Change parent PIN",onDone:p=>{setSettings(s=>({...s,pin:p}));setPinSetup(null);},onCancel:()=>setPinSetup(null)});}}/>}
+
+      <Toast msg={toast}/>
+      <p style={S.footer}>🛡️ Only approved ticks count · prayers locked to their window · past days need parent PIN</p>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
